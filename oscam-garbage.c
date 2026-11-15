@@ -27,17 +27,13 @@ static uint32_t garbage_counter;
 static int32_t garbage_collector_active;
 static int32_t garbage_adders_inflight;
 static int32_t garbage_debug;
-static pthread_mutex_t garbage_add_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t garbage_state_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t garbage_state_cond = PTHREAD_COND_INITIALIZER;
 
-static uint32_t garbage_next_bucket(void)
+static time_t garbage_time(void)
 {
-	uint32_t bucket;
-	SAFE_MUTEX_LOCK(&garbage_add_lock);
-	bucket = garbage_counter++ & BUCKET_MASK;
-	SAFE_MUTEX_UNLOCK(&garbage_add_lock);
-	return bucket;
+	struct timespec now;
+	return clock_gettime(CLOCK_MONOTONIC, &now) == 0 ? now.tv_sec : (time_t)-1;
 }
 
 static int32_t garbage_collector_is_active(void)
@@ -56,7 +52,7 @@ static void garbage_collector_set_active(int32_t active)
 	SAFE_MUTEX_UNLOCK(&garbage_state_lock);
 }
 
-static int32_t garbage_add_ref(void)
+static int32_t garbage_add_ref(uint32_t *bucket)
 {
 	int32_t active;
 	SAFE_MUTEX_LOCK(&garbage_state_lock);
@@ -64,6 +60,7 @@ static int32_t garbage_add_ref(void)
 	if(active)
 	{
 		garbage_adders_inflight++;
+		*bucket = garbage_counter++ & BUCKET_MASK;
 	}
 	SAFE_MUTEX_UNLOCK(&garbage_state_lock);
 	return active;
@@ -96,13 +93,12 @@ void add_garbage(void *data)
 		return;
 	}
 
-	if(!garbage_add_ref())
+	uint32_t bucket;
+	if(!garbage_add_ref(&bucket))
 	{
 		NULLFREE(data);
 		return;
 	}
-
-	uint32_t bucket = garbage_next_bucket();
 
 	struct cs_garbage *garbage = (struct cs_garbage*)malloc(sizeof(struct cs_garbage));
 	if(garbage == NULL)
@@ -112,7 +108,6 @@ void add_garbage(void *data)
 		NULLFREE(data);
 		return;
 	}
-	garbage->time = cs_time();
 	garbage->data = data;
 	garbage->next = NULL;
 #ifdef WITH_DEBUG
@@ -143,6 +138,7 @@ void add_garbage(void *data)
 	}
 #endif
 
+	garbage->time = garbage_time();
 	garbage->next = garbage_first[bucket];
 	garbage_first[bucket] = garbage;
 
@@ -156,47 +152,50 @@ static pthread_mutex_t sleep_cond_mutex;
 static void garbage_collector(void)
 {
 	int32_t i;
-	struct cs_garbage *garbage, *next, *prev;
+	struct cs_garbage *garbage, *next;
 	set_thread_name(__func__);
 
 	while(garbage_collector_is_active())
 	{
-		uint64_t retention = ((uint64_t)cfg.ctimeout * 2) / 1000 + 6;
-		if(retention < 26)
+		time_t now = garbage_time();
+		if(now == (time_t)-1)
 		{
-			retention = 26;
+			sleepms_on_cond(__func__, &sleep_cond_mutex, &sleep_cond, 500);
+			continue;
 		}
-		time_t deltime = cs_time() - (time_t)retention;
+		uint64_t retention = ((uint64_t)cfg.ctimeout * 2) / 1000 + 6;
+		time_t deltime = now - (time_t)retention;
 
 		for(i = 0; i < HASH_BUCKETS; ++i)
 		{
 			cs_writelock(__func__, &garbage_lock[i]);
+			struct cs_garbage *expired = NULL;
+			struct cs_garbage **link = &garbage_first[i];
 
-			for(garbage = garbage_first[i], prev = NULL; garbage; prev = garbage, garbage = garbage->next)
+			while((garbage = *link))
 			{
-				if(garbage->time < deltime)
+				// Failed timestamp reads leave the entry for shutdown cleanup.
+				if(garbage->time != (time_t)-1 && garbage->time < deltime)
 				{
-					if(prev)
-					{
-						prev->next = NULL;
-					}
-					else
-					{
-						garbage_first[i] = NULL;
-					}
-					break;
+					*link = garbage->next;
+					garbage->next = expired;
+					expired = garbage;
+				}
+				else
+				{
+					link = &garbage->next;
 				}
 			}
 
 			cs_writeunlock(__func__, &garbage_lock[i]);
 
-			// List has been detached, no lock needed for freeing
-			while(garbage)
+			// Entries have been detached, no lock needed for freeing.
+			while(expired)
 			{
-				next = garbage->next;
-				free(garbage->data);
-				free(garbage);
-				garbage = next;
+				next = expired->next;
+				free(expired->data);
+				free(expired);
+				expired = next;
 			}
 		}
 		sleepms_on_cond(__func__, &sleep_cond_mutex, &sleep_cond, 500);
