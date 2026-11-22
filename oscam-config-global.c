@@ -342,9 +342,8 @@ void global_fixups_fn(void *UNUSED(var))
 #define OFS(X) offsetof(struct s_config, X)
 #define SIZEOF(X) sizeof(((struct s_config *)0)->X)
 
-static void dateformat_fn(const char *token, char *value, void *setting, FILE *f)
+static void dateformat_fn(const char *token, char *value, void *UNUSED(setting), FILE *f)
 {
-	char *format = setting;
 	if(value)
 	{
 		const char *candidate = *value ? value : CS_DEFAULT_DATEFORMAT;
@@ -354,11 +353,13 @@ static void dateformat_fn(const char *token, char *value, void *setting, FILE *f
 			fprintf(stderr, "WARNING: Ignoring invalid dateformat: %s\n", error);
 			return;
 		}
-		cs_strncpy(format, candidate, sizeof(cfg.dateformat));
+		cs_dateformat_set(candidate);
 		return;
 	}
-	if(cfg.http_full_cfg || strcmp(format, CS_DEFAULT_DATEFORMAT))
-		{ fprintf_conf(f, token, "%s\n", format); }
+	char current[sizeof(cfg.dateformat)];
+	cs_dateformat_get(current, sizeof(current));
+	if(cfg.http_full_cfg || strcmp(current, CS_DEFAULT_DATEFORMAT))
+		{ fprintf_conf(f, token, "%s\n", current); }
 }
 
 static const struct config_list global_opts[] =

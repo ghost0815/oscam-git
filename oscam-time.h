@@ -4,6 +4,8 @@
 #define CS_DEFAULT_DATEFORMAT "%Y-%m-%d %H:%M:%S"
 
 const char *cs_dateformat_error(const char *fmt);
+void cs_dateformat_get(char *buf, size_t len);
+void cs_dateformat_set(const char *fmt);
 
 int64_t comp_timeb(struct timeb *tpa, struct timeb *tpb);
 int64_t comp_timebus(struct timeb *tpa, struct timeb *tpb);

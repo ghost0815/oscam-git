@@ -4,6 +4,7 @@
  * Build this file using `make tests`
  */
 #include "globals.h"
+#include <locale.h>
 
 #include "oscam-array.h"
 #include "oscam-string.h"
@@ -1426,6 +1427,10 @@ static int run_date_format_tests(void)
 	{
 		{ "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%H:%M:%S" },
 		{ "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%H:%M:%S" },
+		{ "%d.%m.%Y, %H:%M:%S", "%d.%m.%Y", "%H:%M:%S" },
+		{ "%Y-%m-%d - %H:%M:%S", "%Y-%m-%d", "%H:%M:%S" },
+		{ "%d.%m.%Y | %H:%M:%S", "%d.%m.%Y", "%H:%M:%S" },
+		{ "%d.%m.%Y @ %H:%M:%S", "%d.%m.%Y", "%H:%M:%S" },
 		{ "%d/%m/%Y %I:%M %p", "%d/%m/%Y", "%I:%M %p" },
 		{ "%H:%M:%S", "%Y-%m-%d", "%H:%M:%S" },
 		{ "%d/%m/%Y", "%d/%m/%Y", "%H:%M:%S" },
@@ -1530,6 +1535,34 @@ static int run_date_format_tests(void)
 		actual[0] = 'a';
 		cs_format_date_tm(&utc, actual, 1);
 		if(actual[0] || actual[1] != 'b' || actual[2] != 'c') { ++failures; }
+		actual[0] = 'a';
+		cs_format_date_tm(NULL, actual, sizeof(actual));
+		if(actual[0] || actual[1] != 'b' || actual[2] != 'c') { ++failures; }
+	}
+	{
+		char got[sizeof(cfg.dateformat)];
+		cs_dateformat_set("%d.%m.%Y %H:%M");
+		cs_dateformat_get(got, sizeof(got));
+		if(strcmp(got, "%d.%m.%Y %H:%M")) { ++failures; }
+		cs_dateformat_set("");
+		cs_dateformat_get(got, sizeof(got));
+		if(strcmp(got, CS_DEFAULT_DATEFORMAT)) { ++failures; }
+	}
+	{
+		const char *saved_locale = setlocale(LC_TIME, NULL);
+		char prev_locale[64] = "";
+		if(saved_locale) { snprintf(prev_locale, sizeof(prev_locale), "%s", saved_locale); }
+		static const char *locales24[] = { "de_DE.UTF-8", "fr_FR.UTF-8", "pl_PL.UTF-8", NULL };
+		for(size_t i = 0; locales24[i]; ++i)
+		{
+			if(setlocale(LC_TIME, locales24[i]))
+			{
+				if(cs_dateformat_error("%d/%m/%Y %I:%M %p")) { ++failures; }
+				if(!cs_dateformat_error("%p")) { ++failures; }
+				break;
+			}
+		}
+		if(prev_locale[0]) { setlocale(LC_TIME, prev_locale); }
 	}
 	memcpy(cfg.dateformat, saved_format, sizeof(saved_format));
 	printf("Date format tests: %d failure(s)\n", failures);

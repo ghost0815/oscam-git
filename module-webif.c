@@ -675,11 +675,11 @@ static void webif_save_config(char *section, struct templatevars *vars, struct u
 		for(i = 0; i < cnt; i++)
 		{
 			if(!streq((*params).params[i], "dateformat")) { continue; }
-			const char *submitted = (*params).values[i];
+			char *submitted = trim((*params).values[i]);
 			const char *error = cs_dateformat_error(*submitted ? submitted : CS_DEFAULT_DATEFORMAT);
 			if(error)
 			{
-				tpl_printf(vars, TPLADD, "TMP", "ERROR: Date format was not saved: %s.", error);
+				tpl_printf(vars, TPLADD, "TMP", "ERROR: Configuration was not saved: %s.", error);
 				tpl_addMsg(vars, tpl_getVar(vars, "TMP"));
 				return;
 			}
@@ -758,7 +758,9 @@ static char *send_oscam_config_global(struct templatevars *vars, struct uriparam
 	tpl_printf(vars, TPLADD, "SLEEP", "%d", cfg.tosleep);
 	tpl_addVar(vars, TPLADD, "UNLOCKPARENTALCHECKED", (cfg.ulparent == 1) ? "checked" : "");
 
-	tpl_addVar(vars, TPLADD, "DATEFORMAT", xml_encode(vars, cfg.dateformat));
+	char dfbuf[sizeof(cfg.dateformat)];
+	cs_dateformat_get(dfbuf, sizeof(dfbuf));
+	tpl_addVar(vars, TPLADD, "DATEFORMAT", xml_encode(vars, dfbuf));
 
 	if(cfg.reload_useraccounts) { tpl_addVar(vars, TPLADD, "RELOADUSERACCOUNTSCHECKED", "checked"); }
 	if(cfg.reload_readers)      { tpl_addVar(vars, TPLADD, "RELOADREADERSCHECKED", "checked"); }
@@ -3644,8 +3646,6 @@ static char *send_oscam_reader_stats(struct templatevars *vars, struct uriparams
 			READER_STAT *s = statarray[rowcount];
 			if(!(s->rc == rc2hide) && ((rc2show == -1) || (s->rc == rc2show)))
 			{
-				struct tm lt;
-				localtime_r(&s->last_received.time, &lt);
 				ecmcount += s->ecm_count;
 				if(!apicall)
 				{
@@ -3673,6 +3673,8 @@ static char *send_oscam_reader_stats(struct templatevars *vars, struct uriparams
 				}
 				else
 				{
+					struct tm lt;
+					localtime_r(&s->last_received.time, &lt);
 					tpl_printf(vars, TPLADD, "ECMCAID", "%04X", s->caid);
 					tpl_printf(vars, TPLADD, "ECMPROVID", "%06X", s->prid);
 					tpl_printf(vars, TPLADD, "ECMSRVID", "%04X", s->srvid);
@@ -3739,17 +3741,10 @@ static char *send_oscam_reader_stats(struct templatevars *vars, struct uriparams
 	if(lastaccess > 0)
 	{
 		char tbuffer[32];
-		if(apicall)
-		{
-			struct tm lt;
-			localtime_r(&lastaccess, &lt);
-			strftime(tbuffer, sizeof(tbuffer), "%Y-%m-%dT%H:%M:%S%z", &lt);
-		}
-		else
-		{
-			cs_format_time(lastaccess, tbuffer, sizeof(tbuffer));
-		}
-		tpl_addVar(vars, TPLADD, "LASTACCESS", apicall ? tbuffer : xml_encode(vars, tbuffer));
+		struct tm lt;
+		localtime_r(&lastaccess, &lt);
+		strftime(tbuffer, sizeof(tbuffer), "%Y-%m-%dT%H:%M:%S%z", &lt);
+		tpl_addVar(vars, TPLADD, "LASTACCESS", tbuffer);
 	}
 	else
 	{
@@ -5429,20 +5424,22 @@ static char *send_oscam_entitlement(struct templatevars *vars, struct uriparams 
 					int jsondelimiter = 0;
 					while((item = ll_iter_next(&itr)))
 					{
-						localtime_r(&item->start, &start_t);
-						localtime_r(&item->end, &end_t);
-
 						if(!apicall)
-							{ cs_format_date(item->start, tbuffer, sizeof(tbuffer)); }
+						{
+							cs_format_date(item->start, tbuffer, sizeof(tbuffer));
+							tpl_addVar(vars, TPLADD, "ENTSTARTDATE", xml_encode(vars, tbuffer));
+							cs_format_date(item->end, tbuffer, sizeof(tbuffer));
+							tpl_addVar(vars, TPLADD, "ENTENDDATE", xml_encode(vars, tbuffer));
+						}
 						else
-							{ strftime(tbuffer, 30, "%Y-%m-%dT%H:%M:%S%z", &start_t); }
-						tpl_addVar(vars, TPLADD, "ENTSTARTDATE", apicall ? tbuffer : xml_encode(vars, tbuffer));
-
-						if(!apicall)
-							{ cs_format_date(item->end, tbuffer, sizeof(tbuffer)); }
-						else
-							{ strftime(tbuffer, 30, "%Y-%m-%dT%H:%M:%S%z", &end_t); }
-						tpl_addVar(vars, TPLADD, "ENTENDDATE", apicall ? tbuffer : xml_encode(vars, tbuffer));
+						{
+							localtime_r(&item->start, &start_t);
+							localtime_r(&item->end, &end_t);
+							strftime(tbuffer, 30, "%Y-%m-%dT%H:%M:%S%z", &start_t);
+							tpl_addVar(vars, TPLADD, "ENTSTARTDATE", tbuffer);
+							strftime(tbuffer, 30, "%Y-%m-%dT%H:%M:%S%z", &end_t);
+							tpl_addVar(vars, TPLADD, "ENTENDDATE", tbuffer);
+						}
 
 						tpl_addVar(vars, TPLADD, "ENTEXPIERED", item->end > now ? "e_valid" : "e_expired");
 						tpl_printf(vars, TPLADD, "ENTCAID", "%04X", item->caid);
@@ -6452,7 +6449,7 @@ static char *send_oscam_status(struct templatevars * vars, struct uriparams * pa
 										active_ent++;
 										localtime_r(&ent->end, &end_t);
 										char entbuf[32];
-										cs_format_date(ent->end, entbuf, sizeof(entbuf));
+										cs_format_date_tm(&end_t, entbuf, sizeof(entbuf));
 										tpl_printf(vars, TPLAPPEND, "TMPSPAN", "%04X@%06X<BR>exp:%s",
 												ent->caid, ent->provid, xml_encode(vars, entbuf));
 										tpl_printf(vars, TPLAPPEND, "ENTITLEMENTS", "%s{\"caid\":\"%04X\",\"provid\":\"%06X\",\"exp\":\"%04d/%02d/%02d\",\"expdisplay\":\"%s\"}",
