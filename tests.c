@@ -1475,7 +1475,7 @@ static int run_date_format_tests(void)
 	{
 		"%c", "%A, %d %B %Y %H:%M:%S", "%H:%M:%S %d/%m/%Y",
 		"%Y %H %m", "%Y%n%H", "%Y%t%H", "%Y\n%H", "%Y\t%H",
-		"%100000Y", "%Y%Y%Y%Y%Y%Y%Y%Y", "%%", "", NULL
+		"%100000Y", "%Y%Y%Y%Y%Y%Y%Y%Y", "%%", "%Y]]>%m", "", NULL
 	};
 	if(!cs_dateformat_error(NULL)) { ++failures; }
 	for(size_t i = 0; valid[i]; ++i)
@@ -1547,6 +1547,31 @@ static int run_date_format_tests(void)
 		cs_dateformat_set("");
 		cs_dateformat_get(got, sizeof(got));
 		if(strcmp(got, CS_DEFAULT_DATEFORMAT)) { ++failures; }
+	}
+	{
+		char actual[32], dpart[32], tpart[32], expected[32];
+		size_t clock_off = 99;
+		cs_dateformat_set("%Y-%m-%d %H:%M:%S");
+		cs_format_time_offset(when, actual, sizeof(actual), &clock_off);
+		strftime(expected, sizeof(expected), "%H:%M:%S", &st);
+		if(clock_off != 11 || strcmp(actual + clock_off, expected)) { ++failures; }
+		if(!cs_format_date_and_clock(when, dpart, sizeof(dpart), tpart, sizeof(tpart))) { ++failures; }
+		strftime(expected, sizeof(expected), "%Y-%m-%d", &st);
+		if(strcmp(dpart, expected)) { ++failures; }
+		strftime(expected, sizeof(expected), "%H:%M:%S", &st);
+		if(strcmp(tpart, expected)) { ++failures; }
+
+		cs_dateformat_set("%d.%m.%Y");
+		cs_format_time_offset(when, actual, sizeof(actual), &clock_off);
+		if(clock_off != 0) { ++failures; }
+		if(cs_format_date_and_clock(when, dpart, sizeof(dpart), tpart, sizeof(tpart))) { ++failures; }
+		if(dpart[0] || tpart[0]) { ++failures; }
+
+		cs_dateformat_set("%H:%M:%S");
+		cs_format_time_offset(when, actual, sizeof(actual), &clock_off);
+		if(clock_off != 0) { ++failures; }
+		if(cs_format_date_and_clock(when, dpart, sizeof(dpart), tpart, sizeof(tpart))) { ++failures; }
+		if(dpart[0] || tpart[0]) { ++failures; }
 	}
 	{
 		const char *saved_locale = setlocale(LC_TIME, NULL);

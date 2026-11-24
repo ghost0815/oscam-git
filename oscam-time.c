@@ -201,6 +201,8 @@ const char *cs_dateformat_error(const char *fmt)
 	if(!fmt || !*fmt) { return "dateformat is empty"; }
 	if(strlen(fmt) >= sizeof(cfg.dateformat))
 		{ return "dateformat exceeds 32 characters"; }
+	if(strstr(fmt, "]]>"))
+		{ return "dateformat must not contain ]]> sequence"; }
 
 	for(p = fmt; *p; ++p)
 	{
@@ -285,31 +287,8 @@ static char *cs_strftime_or_default(char *buf, size_t len, const char *fmt,
 	return buf;
 }
 
-char *cs_format_time(time_t t, char *buf, size_t len)
+static size_t cs_extract_date_fmt(const char *fmt, char *datefmt, size_t len)
 {
-	struct tm st;
-	char fmt[sizeof(cfg.dateformat)];
-	if(!len) { return buf; }
-	if(!localtime_r(&t, &st)) { buf[0] = '\0'; return buf; }
-	cs_dateformat_get(fmt, sizeof(fmt));
-	return cs_strftime_or_default(buf, len, fmt, CS_DEFAULT_DATEFORMAT, &st);
-}
-
-char *cs_format_date(time_t t, char *buf, size_t len)
-{
-	struct tm st;
-	if(!len) { return buf; }
-	if(!localtime_r(&t, &st)) { buf[0] = '\0'; return buf; }
-	return cs_format_date_tm(&st, buf, len);
-}
-
-/* Format an existing calendar date without converting its timezone. */
-char *cs_format_date_tm(const struct tm *st, char *buf, size_t len)
-{
-	if(!len) { return buf; }
-	if(!st) { buf[0] = '\0'; return buf; }
-	char fmt[sizeof(cfg.dateformat)];
-	cs_dateformat_get(fmt, sizeof(fmt));
 	const char *date_end;
 	const char *timefmt = cs_time_format_start(fmt, &date_end);
 	size_t date_len = timefmt ? (size_t)(timefmt - fmt) : strlen(fmt);
@@ -335,9 +314,71 @@ char *cs_format_date_tm(const struct tm *st, char *buf, size_t len)
 		}
 	}
 	if(!date_end) { date_len = 0; }
+	if(date_len >= len) { date_len = len ? len - 1 : 0; }
+	if(len)
+	{
+		memcpy(datefmt, fmt, date_len);
+		datefmt[date_len] = '\0';
+	}
+	return date_len;
+}
+
+char *cs_format_time_offset(time_t t, char *buf, size_t len, size_t *clock_offset)
+{
+	struct tm st;
+	char fmt[sizeof(cfg.dateformat)];
+	if(clock_offset) { *clock_offset = 0; }
+	if(!len) { return buf; }
+	if(!localtime_r(&t, &st)) { buf[0] = '\0'; return buf; }
+	cs_dateformat_get(fmt, sizeof(fmt));
+	const char *active_fmt = fmt;
+	size_t stamp_len = strftime(buf, len, fmt, &st);
+	if(!stamp_len)
+	{
+		active_fmt = CS_DEFAULT_DATEFORMAT;
+		stamp_len = strftime(buf, len, active_fmt, &st);
+		if(!stamp_len)
+		{
+			buf[0] = '\0';
+			return buf;
+		}
+	}
+	if(clock_offset)
+	{
+		const char *timefmt = cs_time_format_start(active_fmt, NULL);
+		if(timefmt)
+		{
+			char clockbuf[32];
+			size_t clock_len = strftime(clockbuf, sizeof(clockbuf), timefmt, &st);
+			if(clock_len && clock_len <= stamp_len && !strcmp(buf + stamp_len - clock_len, clockbuf))
+				{ *clock_offset = stamp_len - clock_len; }
+		}
+	}
+	return buf;
+}
+
+char *cs_format_time(time_t t, char *buf, size_t len)
+{
+	return cs_format_time_offset(t, buf, len, NULL);
+}
+
+char *cs_format_date(time_t t, char *buf, size_t len)
+{
+	struct tm st;
+	if(!len) { return buf; }
+	if(!localtime_r(&t, &st)) { buf[0] = '\0'; return buf; }
+	return cs_format_date_tm(&st, buf, len);
+}
+
+/* Format an existing calendar date without converting its timezone. */
+char *cs_format_date_tm(const struct tm *st, char *buf, size_t len)
+{
+	if(!len) { return buf; }
+	if(!st) { buf[0] = '\0'; return buf; }
+	char fmt[sizeof(cfg.dateformat)];
 	char datefmt[sizeof(cfg.dateformat)];
-	memcpy(datefmt, fmt, date_len);
-	datefmt[date_len] = '\0';
+	cs_dateformat_get(fmt, sizeof(fmt));
+	size_t date_len = cs_extract_date_fmt(fmt, datefmt, sizeof(datefmt));
 	return cs_strftime_or_default(buf, len, date_len ? datefmt : "%Y-%m-%d", "%Y-%m-%d", st);
 }
 
@@ -350,6 +391,30 @@ char *cs_format_clock(time_t t, char *buf, size_t len)
 	cs_dateformat_get(fmt, sizeof(fmt));
 	const char *timefmt = cs_time_format_start(fmt, NULL);
 	return cs_strftime_or_default(buf, len, timefmt ? timefmt : "%H:%M:%S", "%H:%M:%S", &st);
+}
+
+bool cs_format_date_and_clock(time_t t, char *datebuf, size_t datelen, char *clockbuf, size_t clocklen)
+{
+	if(datelen) { datebuf[0] = '\0'; }
+	if(clocklen) { clockbuf[0] = '\0'; }
+	if(!datelen || !clocklen) { return false; }
+	struct tm st;
+	if(!localtime_r(&t, &st)) { return false; }
+	char fmt[sizeof(cfg.dateformat)];
+	cs_dateformat_get(fmt, sizeof(fmt));
+	const char *date_end;
+	const char *timefmt = cs_time_format_start(fmt, &date_end);
+	if(!date_end || !timefmt) { return false; }
+	char datefmt[sizeof(cfg.dateformat)];
+	size_t date_len = cs_extract_date_fmt(fmt, datefmt, sizeof(datefmt));
+	if(!date_len) { return false; }
+	if(!strftime(datebuf, datelen, datefmt, &st) || !strftime(clockbuf, clocklen, timefmt, &st))
+	{
+		datebuf[0] = '\0';
+		clockbuf[0] = '\0';
+		return false;
+	}
+	return true;
 }
 
 

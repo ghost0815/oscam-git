@@ -268,7 +268,8 @@ static uint8_t get_log_header(char *txt, int32_t txt_size, uint8_t* hdr_logcount
 	time_t walltime = log_ts.time;
 
 	char tbuf[32];
-	cs_format_time(walltime, tbuf, sizeof(tbuf));
+	size_t clock_offset = 0;
+	cs_format_time_offset(walltime, tbuf, sizeof(tbuf), hdr_time_offset ? &clock_offset : NULL);
 	tmp = snprintf(txt, txt_size, "[LOG000]%s %08X %c ",
 		tbuf,
 		cl ? cl->tid : 0,
@@ -290,11 +291,7 @@ static uint8_t get_log_header(char *txt, int32_t txt_size, uint8_t* hdr_logcount
 
 		if(hdr_time_offset != NULL)
 		{
-			char clockbuf[32];
-			cs_format_clock(walltime, clockbuf, sizeof(clockbuf));
-			size_t stamp_len = cs_strlen(tbuf), clock_len = cs_strlen(clockbuf);
-			(*hdr_time_offset) = 8 + (clock_len && clock_len <= stamp_len &&
-					!strcmp(tbuf + stamp_len - clock_len, clockbuf) ? stamp_len - clock_len : 0);
+			(*hdr_time_offset) = 8 + clock_offset;
 		}
 
 		if(hdr_info_offset != NULL)

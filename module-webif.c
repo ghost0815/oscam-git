@@ -6169,8 +6169,11 @@ static char *send_oscam_status(struct templatevars * vars, struct uriparams * pa
 					{
 						if((cl->typ != 'p' && cl->typ != 'r') || cl->reader->card_status == CARD_INSERTED)
 						{
-							char ldbuf[32];
-							tpl_addVar(vars, TPLADD, "CLIENTLOGINDATE", xml_encode(vars, cs_format_time(cl->login, ldbuf, sizeof(ldbuf))));
+							char ldbuf[32], ltbuf[32];
+							if(cs_format_date_and_clock(cl->login, ldbuf, sizeof(ldbuf), ltbuf, sizeof(ltbuf)))
+								{ tpl_printf(vars, TPLADD, "CLIENTLOGINDATE", "%s<BR>%s", xml_encode(vars, ldbuf), xml_encode(vars, ltbuf)); }
+							else
+								{ tpl_addVar(vars, TPLADD, "CLIENTLOGINDATE", xml_encode(vars, cs_format_time(cl->login, ldbuf, sizeof(ldbuf)))); }
 							tpl_addVar(vars, TPLADD, "CLIENTLOGINSECS", sec2timeformat(vars, lsec));
 						}
 						else
@@ -6184,11 +6187,16 @@ static char *send_oscam_status(struct templatevars * vars, struct uriparams * pa
 						char tbuffer [30];
 						localtime_r(&cl->login, &lt);
 						tpl_printf(vars, TPLADD, "CLIENTLOGINDATEFMT", "%02d.%02d.%02d  %02d:%02d:%02d", lt.tm_mday, lt.tm_mon + 1, lt.tm_year % 100, lt.tm_hour, lt.tm_min, lt.tm_sec);
-						char displaybuf[32];
+						char displaybuf[32], logindatebuf[32] = "", logintimebuf[32] = "";
 						const char *display = "";
 						if((cl->typ != 'p' && cl->typ != 'r') || cl->reader->card_status == CARD_INSERTED)
-							{ display = cs_format_time(cl->login, displaybuf, sizeof(displaybuf)); }
+						{
+							display = cs_format_time(cl->login, displaybuf, sizeof(displaybuf));
+							cs_format_date_and_clock(cl->login, logindatebuf, sizeof(logindatebuf), logintimebuf, sizeof(logintimebuf));
+						}
 						tpl_addVar(vars, TPLADD, "CLIENTLOGINDISPLAY", json_encode(vars, display));
+						tpl_addVar(vars, TPLADD, "CLIENTLOGINDATEDISPLAY", json_encode(vars, logindatebuf));
+						tpl_addVar(vars, TPLADD, "CLIENTLOGINTIMEDISPLAY", json_encode(vars, logintimebuf));
 						strftime(tbuffer, 30, "%Y-%m-%dT%H:%M:%S%z", &lt);
 						tpl_addVar(vars, TPLADD, "CLIENTLOGINDATE", tbuffer);
 						tpl_printf(vars, TPLADD, "CLIENTLOGINSECS", "%d", lsec);
@@ -9768,7 +9776,17 @@ static int32_t process_request(FILE * f, IN_ADDR_T in)
 
 			if(cfg.http_locale){
 				float decimal_point = 0.0;
-				setlocale(LC_ALL, cfg.http_locale);
+				if(setlocale(LC_ALL, cfg.http_locale))
+				{
+					char current[sizeof(cfg.dateformat)];
+					cs_dateformat_get(current, sizeof(current));
+					const char *error = cs_dateformat_error(current);
+					if(error)
+					{
+						cs_dateformat_set(CS_DEFAULT_DATEFORMAT);
+						cs_log("WARNING: Resetting invalid dateformat for httplocale '%s': %s", cfg.http_locale, error);
+					}
+				}
 				tpl_printf(vars, TPLADD, "TMP_DECPOINT", "%.1f", decimal_point);
 				tpl_addVar(vars, TPLADD, "LOCALE_DECPOINT", strstr(tpl_getVar(vars, "TMP_DECPOINT"), ",") ? ",": ".");
 			}

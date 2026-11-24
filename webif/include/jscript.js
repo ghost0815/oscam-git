@@ -1335,9 +1335,14 @@ function updateStatuspage(data) {
 					.html(item.times.online.toHHMMSS() + '<br>' + item.times.idle.toHHMMSS())
 					.attr('title', 'Login: ' + loginDisplay);
 			} else {
-				$(uid + " > td.statuscol15")
-					.text(loginDisplay)
-					.attr('title', 'Online: ' + item.times.online.toHHMMSS() + '\nIDLE: ' + item.times.idle.toHHMMSS());
+				var cell = $(uid + " > td.statuscol15");
+				if (item.times.logindatedisplay && item.times.logintimedisplay) {
+					cell.empty()
+						.append(document.createTextNode(item.times.logindatedisplay), '<br>', document.createTextNode(item.times.logintimedisplay));
+				} else {
+					cell.text(loginDisplay);
+				}
+				cell.attr('title', 'Online: ' + item.times.online.toHHMMSS() + '\nIDLE: ' + item.times.idle.toHHMMSS());
 			}
 		}
 
